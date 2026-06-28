@@ -193,6 +193,7 @@ def api_matches():
             'period': event.get('status', {}).get('period', 0),
             'clock': event.get('status', {}).get('displayClock', ''),
             'venue': comp.get('venue', {}).get('fullName', ''),
+            'stage': event.get('season', {}).get('slug', 'group-stage'),
             'home': {
                 'name': h_name,
                 'abbrev': h_name[:3].upper(),
@@ -223,24 +224,219 @@ def api_matches():
 @app.route('/api/standings')
 @rate_limit(60, 60)
 def api_standings():
-    """Group standings — team lists only, zeroed stats (tournament not started)."""
+    """Group standings — computed from actual match results."""
+    import re
+    placeholder_re = re.compile(
+        r'(Group\s+[A-Z]\s+(Winner|2nd\s+Place)|'
+        r'Round\s+of\s+(16|32)\s+\d+\s+Winner|'
+        r'Third\s+Place\s+Group)', re.IGNORECASE
+    )
+
+    # Fetch all matches
+    data = fetch_espn("scoreboard?dates=20260601-20260801")
+    events = data.get('events', [])
+
+    # Build a map: team_name -> {gp, w, d, l, gf, ga, form_list}
+    team_stats = {}
+    for event in events:
+        comps = event.get('competitions', [])
+        if not comps:
+            continue
+        comp = comps[0]
+        competitors = comp.get('competitors', [])
+        home = competitors[0] if len(competitors) > 0 else {}
+        away = competitors[1] if len(competitors) > 1 else {}
+
+        h_name = home.get('team', {}).get('displayName', home.get('team', {}).get('name', '?'))
+        a_name = away.get('team', {}).get('displayName', away.get('team', {}).get('name', '?'))
+        if placeholder_re.search(h_name) or placeholder_re.search(a_name):
+            continue
+
+        status = event.get('status', {}).get('type', {})
+        status_name = status.get('name', '')
+        if status_name not in ('STATUS_FINAL', 'STATUS_FULL_TIME'):
+            continue
+
+        try:
+            h_score = int(home.get('score', '0') or '0')
+            a_score = int(away.get('score', '0') or '0')
+        except (ValueError, TypeError):
+            continue
+
+        for name in (h_name, a_name):
+            if name not in team_stats:
+                team_stats[name] = {'gp': 0, 'w': 0, 'd': 0, 'l': 0,
+                                     'gf': 0, 'ga': 0, 'form': []}
+
+        # Home team
+        team_stats[h_name]['gp'] += 1
+        team_stats[h_name]['gf'] += h_score
+        team_stats[h_name]['ga'] += a_score
+        if h_score > a_score:
+            team_stats[h_name]['w'] += 1
+            team_stats[h_name]['form'].append('W')
+        elif h_score < a_score:
+            team_stats[h_name]['l'] += 1
+            team_stats[h_name]['form'].append('L')
+        else:
+            team_stats[h_name]['d'] += 1
+            team_stats[h_name]['form'].append('D')
+
+        # Away team
+        team_stats[a_name]['gp'] += 1
+        team_stats[a_name]['gf'] += a_score
+        team_stats[a_name]['ga'] += h_score
+        if a_score > h_score:
+            team_stats[a_name]['w'] += 1
+            team_stats[a_name]['form'].append('W')
+        elif a_score < h_score:
+            team_stats[a_name]['l'] += 1
+            team_stats[a_name]['form'].append('L')
+        else:
+            team_stats[a_name]['d'] += 1
+            team_stats[a_name]['form'].append('D')
+
     groups = []
     for g in STANDINGS_DATA.get('standings', []):
+        group_name = g['group'].replace('GROUP_', 'Group ')
         entries = []
-        for i, e in enumerate(g.get('table', [])):
+        for e in g.get('table', []):
             team_name = e['team']['name']
+            stats = team_stats.get(team_name, {'gp': 0, 'w': 0, 'd': 0, 'l': 0,
+                                                'gf': 0, 'ga': 0, 'form': []})
+            form_str = ''.join(stats.get('form', [])[-5:])
             entries.append({
                 'team': team_name,
                 'abbrev': team_name[:3].upper(),
                 'logo': flag_url(team_name),
-                'gp': 0, 'w': 0, 'd': 0, 'l': 0,
-                'gf': 0, 'ga': 0, 'gd': 0, 'pts': 0,
-                'form': '',
+                'gp': stats['gp'],
+                'w': stats['w'],
+                'd': stats['d'],
+                'l': stats['l'],
+                'gf': stats['gf'],
+                'ga': stats['ga'],
+                'gd': stats['gf'] - stats['ga'],
+                'pts': stats['w'] * 3 + stats['d'],
+                'form': form_str,
             })
-        group_name = g['group'].replace('GROUP_', 'Group ')
+        # Sort by points desc, GD desc, GF desc
+        entries.sort(key=lambda x: (-x['pts'], -x['gd'], -x['gf']))
         groups.append({'name': group_name, 'standings': entries})
 
     return jsonify({'groups': groups})
+
+
+@app.route('/api/best-thirds')
+@rate_limit(60, 60)
+def api_best_thirds():
+    """Best third-place teams across all groups — sorted by points, GD, GF."""
+    # Reuse the same standings computation
+    import re
+    placeholder_re = re.compile(
+        r'(Group\s+[A-Z]\s+(Winner|2nd\s+Place)|'
+        r'Round\s+of\s+(16|32)\s+\d+\s+Winner|'
+        r'Third\s+Place\s+Group)', re.IGNORECASE
+    )
+
+    data = fetch_espn("scoreboard?dates=20260601-20260801")
+    events = data.get('events', [])
+
+    team_stats = {}
+    for event in events:
+        comps = event.get('competitions', [])
+        if not comps:
+            continue
+        comp = comps[0]
+        competitors = comp.get('competitors', [])
+        home = competitors[0] if len(competitors) > 0 else {}
+        away = competitors[1] if len(competitors) > 1 else {}
+
+        h_name = home.get('team', {}).get('displayName', home.get('team', {}).get('name', '?'))
+        a_name = away.get('team', {}).get('displayName', away.get('team', {}).get('name', '?'))
+        if placeholder_re.search(h_name) or placeholder_re.search(a_name):
+            continue
+
+        status = event.get('status', {}).get('type', {})
+        status_name = status.get('name', '')
+        if status_name not in ('STATUS_FINAL', 'STATUS_FULL_TIME'):
+            continue
+
+        try:
+            h_score = int(home.get('score', '0') or '0')
+            a_score = int(away.get('score', '0') or '0')
+        except (ValueError, TypeError):
+            continue
+
+        for name in (h_name, a_name):
+            if name not in team_stats:
+                team_stats[name] = {'gp': 0, 'w': 0, 'd': 0, 'l': 0,
+                                     'gf': 0, 'ga': 0, 'form': []}
+
+        team_stats[h_name]['gp'] += 1
+        team_stats[h_name]['gf'] += h_score
+        team_stats[h_name]['ga'] += a_score
+        if h_score > a_score:
+            team_stats[h_name]['w'] += 1
+            team_stats[h_name]['form'].append('W')
+        elif h_score < a_score:
+            team_stats[h_name]['l'] += 1
+            team_stats[h_name]['form'].append('L')
+        else:
+            team_stats[h_name]['d'] += 1
+            team_stats[h_name]['form'].append('D')
+
+        team_stats[a_name]['gp'] += 1
+        team_stats[a_name]['gf'] += a_score
+        team_stats[a_name]['ga'] += h_score
+        if a_score > h_score:
+            team_stats[a_name]['w'] += 1
+            team_stats[a_name]['form'].append('W')
+        elif a_score < h_score:
+            team_stats[a_name]['l'] += 1
+            team_stats[a_name]['form'].append('L')
+        else:
+            team_stats[a_name]['d'] += 1
+            team_stats[a_name]['form'].append('D')
+
+    # Extract 3rd place from each group
+    thirds = []
+    for g in STANDINGS_DATA.get('standings', []):
+        group_name = g['group'].replace('GROUP_', 'Group ')
+        entries = []
+        for e in g.get('table', []):
+            team_name = e['team']['name']
+            stats = team_stats.get(team_name, {'gp': 0, 'w': 0, 'd': 0, 'l': 0,
+                                                'gf': 0, 'ga': 0, 'form': []})
+            form_str = ''.join(stats.get('form', [])[-5:])
+            entries.append({
+                'team': team_name,
+                'abbrev': team_name[:3].upper(),
+                'logo': flag_url(team_name),
+                'gp': stats['gp'],
+                'w': stats['w'],
+                'd': stats['d'],
+                'l': stats['l'],
+                'gf': stats['gf'],
+                'ga': stats['ga'],
+                'gd': stats['gf'] - stats['ga'],
+                'pts': stats['w'] * 3 + stats['d'],
+                'form': form_str,
+            })
+        entries.sort(key=lambda x: (-x['pts'], -x['gd'], -x['gf']))
+        if len(entries) >= 3:
+            third = entries[2]
+            third['group'] = group_name
+            thirds.append(third)
+
+    # Sort all 3rd place teams: pts desc, gd desc, gf desc
+    thirds.sort(key=lambda x: (-x['pts'], -x['gd'], -x['gf']))
+
+    # Mark top 8 as qualifying
+    for i, t in enumerate(thirds):
+        t['rank'] = i + 1
+        t['qualifies'] = i < 8
+
+    return jsonify({'thirds': thirds, 'qualifying_spots': 8})
 
 
 @app.route('/api/teams')
@@ -400,6 +596,21 @@ def api_stats():
     player_assists = {}
     player_yellows = {}
     player_reds = {}
+    player_team = {}  # player shortName → team name
+
+    # Known player→team mappings for players not captured in match details
+    _known_players = {
+        'B. Guimarães': 'Brazil',
+        'M. Olise': 'France',
+        'H. Mejbri': 'Tunisia',
+        'D. Dumfries': 'Netherlands',
+        'C. Wood': 'New Zealand',
+        'J. Enciso': 'Paraguay',
+        'V. Gyökeres': 'Sweden',
+        'K. Mbappé': 'France',
+        'B. Embolo': 'Switzerland',
+    }
+    player_team.update(_known_players)
 
     for event in events:
         comps = event.get('competitions', [])
@@ -474,6 +685,9 @@ def api_stats():
             if not player_name:
                 continue
 
+            if team_name:
+                player_team[player_name] = team_name
+
             if is_goal:
                 player_goals[player_name] = player_goals.get(player_name, 0) + 1
                 # Assist
@@ -489,10 +703,36 @@ def api_stats():
                 player_reds[player_name] = player_reds.get(player_name, 0) + 1
                 red_cards += 1
 
-    # Rank players
+    # Rank players — now includes team
     def rank_dict(d, limit=10):
-        return [{'name': k, 'count': v} for k, v in
-                sorted(d.items(), key=lambda x: (-x[1], x[0]))[:limit]]
+        result = []
+        for name, count in sorted(d.items(), key=lambda x: (-x[1], x[0]))[:limit]:
+            entry = {'name': name, 'count': count}
+            team = player_team.get(name, '')
+            if team:
+                entry['team'] = team
+            result.append(entry)
+        return result
+
+    # Fetch assists from ESPN statistics API (scoring details only have 1 athlete)
+    assist_leaders = []
+    try:
+        stats_data = fetch_espn("statistics")
+        for stat_group in stats_data.get('stats', []):
+            if stat_group.get('name') == 'assistsLeaders':
+                for leader in stat_group.get('leaders', []):
+                    athlete = leader.get('athlete', {})
+                    name = athlete.get('shortName') or athlete.get('displayName', '')
+                    value = int(leader.get('value', 0))
+                    if name and value > 0:
+                        entry = {'name': name, 'count': value}
+                        team = player_team.get(name, '')
+                        if team:
+                            entry['team'] = team
+                        assist_leaders.append(entry)
+                break
+    except Exception:
+        pass  # fall back to empty if stats API fails
 
     return jsonify({
         'tournament': {
@@ -508,8 +748,8 @@ def api_stats():
             'totalAttendance': total_attendance,
         },
         'players': {
-            'topScorers': rank_dict(player_goals, 15),
-            'topAssists': rank_dict(player_assists, 15),
+            'topScorers': rank_dict(player_goals, 10),
+            'topAssists': assist_leaders[:10],
             'mostYellows': rank_dict(player_yellows, 10),
             'mostReds': rank_dict(player_reds, 10),
         }

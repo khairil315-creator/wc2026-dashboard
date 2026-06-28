@@ -3,3 +3,19 @@ __pycache__/
 analytics.json
 .DS_Store
 *.log
+
+# backups
+*.bak.*
+*.bak
+
+# static test files
+static/test.html
+static/popout.html
+static/easter-egg.mp4
+static/football.svg
+
+# db
+*.db
+
+# Python hyperframe/cache
+hyperframe/
