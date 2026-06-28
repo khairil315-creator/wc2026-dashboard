@@ -2,6 +2,16 @@
 
 Live World Cup 2026 dashboard at **https://wc2026.bilbofort.site/**
 
+## Screenshots
+
+| Matches | Bracket | Standings |
+|:-------:|:-------:|:---------:|
+| ![Matches](screenshots/matches.png) | ![Bracket](screenshots/bracket.png) | ![Standings](screenshots/standings.png) |
+
+| Teams | Stats |
+|:----:|:-----:|
+| ![Teams](screenshots/teams.png) | ![Stats](screenshots/stats.png) |
+
 ## Stack
 
 - **Backend**: Flask (Python) — `/home/bilbo/wc2026/server.py`
@@ -12,7 +22,7 @@ Live World Cup 2026 dashboard at **https://wc2026.bilbofort.site/**
 ## Features
 
 | Tab | Description |
-|---|---|
+|-----|-------------|
 | Matches | Live scores, schedule, team filter (click any team name) |
 | Bracket | Knockout stage tree (round of 32 → final) |
 | Standings | Group tables (A–L) |
@@ -23,7 +33,8 @@ Live World Cup 2026 dashboard at **https://wc2026.bilbofort.site/**
 - **News ticker** — auto-scrolling Google News headlines, touch-drag enabled
 - **Team filter** — click any team name in a match card or standings table to filter schedule
 - **Live polling** — matches refresh every 30 min, news every 15 min
-- **Goal animations** — confetti on new goals
+- **Goal animations** — confetti + browser notification with vibration on new goals
+- **Match notifications** — browser alerts for kickoff, half-time, full-time with vibration
 - **PWA-ready** — responsive, mobile-friendly
 
 ## API Endpoints
@@ -31,7 +42,7 @@ Live World Cup 2026 dashboard at **https://wc2026.bilbofort.site/**
 All rate-limited, ESPN data cached server-side:
 
 | Endpoint | Rate Limit | Source |
-|---|---|---|
+|----------|-----------|--------|
 | `/api/matches` | 120/min | ESPN scoreboard |
 | `/api/live` | 120/min | ESPN scoreboard (live only) |
 | `/api/standings` | 60/min | Static JSON |
@@ -55,13 +66,14 @@ cd /home/bilbo/wc2026
 
 - CSP, HSTS, X-Frame-Options, XSS protection
 - Rate limiting on all API endpoints
+- HTML escaping on all user-facing data (`esc()` utility)
 - Cloudflare hides origin server headers
 - No sensitive files exposed
 
 ## Cron Jobs
 
 | Job | Schedule | Purpose |
-|---|---|---|
+|-----|----------|---------|
 | WC2026 Health Watchdog | Every 10 min | Checks server + API + tunnel; silent when healthy |
 
 ## Notes
