@@ -573,7 +573,7 @@ def api_live():
 def api_bracket():
     """Knockout bracket from ESPN, reordered into correct bracket tree."""
     import re
-    data = fetch_espn("scoreboard?dates=20260601-20260801", ttl=3600)
+    data = fetch_espn("scoreboard?dates=20260601-20260801", ttl=30)
 
     # Parse all events, skip group stage
     raw = {}

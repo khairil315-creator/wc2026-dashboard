@@ -1642,6 +1642,23 @@ body {
 .bracket-match.done {
   border-color: var(--border-light);
 }
+.bracket-match.is-live {
+  border-color: #ff3b30;
+  box-shadow: 0 0 8px rgba(255,59,48,0.3);
+}
+.bracket-live {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #ff3b30;
+  text-align: center;
+  margin-top: 3px;
+  letter-spacing: 0.5px;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .bracket-team {
   display: flex;
   align-items: center;
@@ -2083,7 +2100,9 @@ async function requestNotifyPermission() {
 function isLiveStatus(status) {
   return status === 'STATUS_IN_PROGRESS' || status === 'STATUS_HALFTIME'
       || status === 'STATUS_FIRST_HALF' || status === 'STATUS_SECOND_HALF'
-      || status === 'STATUS_EXTRA_TIME' || status === 'STATUS_PENALTIES';
+      || status === 'STATUS_EXTRA_TIME' || status === 'STATUS_PENALTIES'
+      || status === 'STATUS_END_OF_EXTRATIME' || status === 'STATUS_SHOOTOUT'
+      || status === 'STATUS_PENALTY_SHOOTOUT';
 }
 
 /* ── Match Card ─────────────────────────────────────────────────────────── */
@@ -2127,12 +2146,14 @@ function matchCardHTML(m, animate=true) {
         const groupedEventsHTML = (events) => {
           const groups = new Map();
           events.forEach(e => {
-            if (!groups.has(e.player)) groups.set(e.player, []);
-            groups.get(e.player).push(e);
+            const key = e.player + '|' + (e.icon === '⚽' ? 'goal' : e.icon === '🟥' ? 'red' : 'yellow');
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(e);
           });
           let html = '';
-          groups.forEach((evts, player) => {
+          groups.forEach((evts, key) => {
             const e0 = evts[0];
+            const player = e0.player;
             const mins = evts.map(e => e.minute).join(" • ");
             const hasOG = evts.some(e => e.ownGoal);
             html += `<span class="event-item ${e0.icon === '⚽' ? 'event-goal' : e0.icon === '🟥' ? 'event-red' : 'event-yellow'}">
@@ -2893,7 +2914,7 @@ function renderBracket(data) {
     const aFlag = bracketFlag(m.away);
     const hFlagHTML = hFlag ? `<img src="${hFlag}" class="team-flag" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
     const aFlagHTML = aFlag ? `<img src="${aFlag}" class="team-flag" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
-    return `<div class="bracket-match${isDone ? ' done' : ''}" data-match-id="${m.id}"${rowStyle}>
+    return `<div class="bracket-match${isDone ? ' done' : ''}${isLive ? ' is-live' : ''}" data-match-id="${m.id}"${rowStyle}>
       <div class="bracket-team${hWin ? ' winner' : ''}">
         <span class="team-name-b">${hFlagHTML}<span>${shortenName(m.home)}</span></span>
         <span class="team-score">${hScore}</span>
@@ -2903,7 +2924,7 @@ function renderBracket(data) {
         <span class="team-score">${aScore}</span>
       </div>
       ${pensHTML}
-      ${m.date && !isDone ? `<div class="match-date">${new Date(m.date).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'Asia/Kuala_Lumpur'})} · ${new Date(m.date).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Kuala_Lumpur'})}</div>` : ''}
+      ${isLive ? '<div class="bracket-live">LIVE</div>' : (m.date && !isDone ? `<div class="match-date">${new Date(m.date).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'Asia/Kuala_Lumpur'})} · ${new Date(m.date).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Kuala_Lumpur'})}</div>` : '')}
     </div>`;
   }
 
