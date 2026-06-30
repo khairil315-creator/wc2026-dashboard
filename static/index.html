@@ -530,6 +530,14 @@ body {
   font-weight: 700;
   letter-spacing: 0.05em;
 }
+.pens-label {
+  font-size: 0.6rem;
+  color: var(--accent);
+  font-weight: 600;
+  display: block;
+  text-align: center;
+  margin-top: 1px;
+}
 
 /* ── Compact completed cards ─────────────────────── */
 .match-card.completed {
@@ -584,6 +592,30 @@ body {
 .match-card.completed.expanded .match-events { display: grid; }
 .match-card.completed.expanded .match-card-footer { display: flex; }
 
+/* YouTube highlights link */
+.highlight-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #ff0000;
+  text-decoration: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: rgba(255, 0, 0, 0.08);
+  transition: background .15s;
+  white-space: nowrap;
+}
+.highlight-link:hover {
+  background: rgba(255, 0, 0, 0.18);
+}
+.highlight-link svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 /* Match events (goals / cards) — two-column by team */
 .match-events {
   display: grid;
@@ -609,13 +641,47 @@ body {
 .event-goal { background: rgba(26,140,74,0.15); color: var(--green-bright); }
 .event-yellow { background: rgba(245,158,11,0.12); color: #fbbf24; }
 .event-red { background: rgba(239,68,68,0.12); color: #f87171; }
+.event-pen { background: rgba(234,179,8,0.1); color: #eab308; font-size: 0.68rem; }
 .event-icon { font-size: 0.7rem; line-height: 1; }
 .event-player { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
 .event-minute { opacity: 0.7; font-variant-numeric: tabular-nums; }
+.pen-separator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 0 2px;
+}
+.pen-separator::before,
+.pen-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(234,179,8,0.3);
+}
+.pen-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #eab308;
+  opacity: 0.8;
+  white-space: nowrap;
+}
 .og-badge {
   display: inline-block;
   background: rgba(239,68,68,0.2);
   color: #f87171;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+.pen-badge {
+  display: inline-block;
+  background: rgba(255,68,68,0.25);
+  color: #ff6666;
   font-size: 0.6rem;
   font-weight: 700;
   padding: 1px 4px;
@@ -1617,6 +1683,11 @@ body {
   text-align: center; margin-top: 3px;
   padding-top: 3px; border-top: 1px solid var(--border);
 }
+.bracket-match .pens-score {
+  font-size: 0.55rem; color: var(--accent);
+  text-align: center; padding: 1px 0;
+  font-weight: 600;
+}
 /* Center column — Final + Third Place stacked */
 .bracket-center {
   display: flex; flex-direction: column;
@@ -1987,7 +2058,7 @@ function statusBadge(status, clock) {
   if (isLiveStatus(status)) {
     return `<span class="match-status live-status">${clock || 'LIVE'}</span>`;
   }
-  if (status === 'STATUS_FINAL' || status === 'STATUS_FULL_TIME') {
+  if (status === 'STATUS_FINAL' || status === 'STATUS_FULL_TIME' || status === 'STATUS_FINAL_PEN') {
     return '<span class="match-status final">FT</span>';
   }
   return '<span class="match-status upcoming">Upcoming</span>';
@@ -2019,7 +2090,7 @@ function isLiveStatus(status) {
 /* ── Match Card ─────────────────────────────────────────────────────────── */
 function matchCardHTML(m, animate=true) {
   const live = isLiveStatus(m.status);
-  const completed = m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME';
+  const completed = m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN';
   const cls = ['match-card'];
   if (live) cls.push('live');
   if (completed) cls.push('completed');
@@ -2039,6 +2110,7 @@ function matchCardHTML(m, animate=true) {
         <div class="match-score-area">
           <span class="score">${m.status === 'STATUS_SCHEDULED' ? 'vs' : `${m.home?.score ?? '0'} - ${m.away?.score ?? '0'}`}</span>
           ${live && m.clock ? `<span class="score-clock">${m.status === 'STATUS_HALFTIME' ? 'HT' : m.clock + "'"}</span>` : ''}
+          ${m.home?.shootoutScore != null && m.away?.shootoutScore != null ? `<span class="pens-label">${m.home.shootoutScore}-${m.away.shootoutScore} pens</span>` : ''}
         </div>
         <div class="team">
           <div class="team-logo">${logoHTML(m.away?.logo, m.away?.color, m.away?.name, 'away')}</div>
@@ -2048,8 +2120,11 @@ function matchCardHTML(m, animate=true) {
       ${(m.keyEvents && m.keyEvents.length > 0) ? (() => {
         const hName = m.home?.name || '';
         const aName = m.away?.name || '';
-        const homeE = m.keyEvents.filter(e => e.team === hName);
-        const awayE = m.keyEvents.filter(e => e.team === aName);
+        const homeE = m.keyEvents.filter(e => e.team === hName && !e.shootout);
+        const awayE = m.keyEvents.filter(e => e.team === aName && !e.shootout);
+        const homePen = m.keyEvents.filter(e => e.team === hName && e.shootout);
+        const awayPen = m.keyEvents.filter(e => e.team === aName && e.shootout);
+        const hasPens = homePen.length > 0 || awayPen.length > 0;
         const groupedEventsHTML = (events) => {
           const groups = new Map();
           events.forEach(e => {
@@ -2070,14 +2145,40 @@ function matchCardHTML(m, animate=true) {
           });
           return html;
         };
+        const penGroupedHTML = (events) => {
+          const groups = new Map();
+          events.forEach(e => {
+            if (!groups.has(e.player)) groups.set(e.player, []);
+            groups.get(e.player).push(e);
+          });
+          let html = '';
+          groups.forEach((evts, player) => {
+            const e0 = evts[0];
+            const mins = evts.map(e => e.minute).join(" • ");
+            html += `<span class="event-item event-pen">
+              <span class="event-icon">${e0.scored ? '✅' : '❌'}</span>
+              ${e0.headshot ? `<img src="${e0.headshot}" class="event-headshot" alt="${player}" loading="lazy" onerror="this.style.display='none'">` : ''}
+              <span class="event-player">${player}</span>
+              <span class="event-minute">${mins}</span>
+            </span>`;
+          });
+          return html;
+        };
         return `<div class="match-events">
-          <div class="events-col events-home">${groupedEventsHTML(homeE)}</div>
-          <div class="events-col events-away">${groupedEventsHTML(awayE)}</div>
+          <div class="events-col events-home">
+            ${groupedEventsHTML(homeE)}
+            ${hasPens ? `<div class="pen-separator"><span class="pen-label">Penalty Shootout</span></div>${penGroupedHTML(homePen)}` : ''}
+          </div>
+          <div class="events-col events-away">
+            ${groupedEventsHTML(awayE)}
+            ${hasPens ? `<div class="pen-separator"><span class="pen-label">Penalty Shootout</span></div>${penGroupedHTML(awayPen)}` : ''}
+          </div>
         </div>`;
       })() : ''}
       <div class="match-card-footer">
         <span>📍 ${m.venue || 'TBD'}</span>
         ${m.statusDetail ? `<span>${m.statusDetail}</span>` : ''}
+        ${completed ? `<a href="https://www.youtube.com/results?search_query=${encodeURIComponent(m.home?.name + ' vs ' + m.away?.name + ' Highlights | World Cup 2026')}" target="_blank" rel="noopener" class="highlight-link" title="Watch highlights on YouTube"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0C.488 3.45.029 5.804 0 12c.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0C23.512 20.55 23.971 18.196 24 12c-.029-6.185-.484-8.549-4.385-8.816zM9 16V8l8 4-8 4z"/></svg> Highlights</a>` : ''}
         ${live ? `<span class="watch-links">
           <a href="https://rtmklik.rtm.gov.my/live/khas/fifawc1" target="_blank" rel="noopener" class="watch-link" title="FIFA WC dedicated channel"><img src="/fifa-wc1.png" alt="FIFA World Cup 1" class="ch-logo">WC1</a>
           <a href="https://rtmklik.rtm.gov.my/live/tv/sukan" target="_blank" rel="noopener" class="watch-link" title="Sukan RTM"><img src="/sukan-rtm.png" alt="Sukan RTM" class="ch-logo">Sukan</a>
@@ -2276,7 +2377,7 @@ function renderSchedule(byDate) {
     let played = 0;
     keys.forEach(key => {
       filtered[key].forEach(m => {
-        if (m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || isLiveStatus(m.status)) played++;
+        if (m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN' || isLiveStatus(m.status)) played++;
       });
     });
     heroCount.textContent = `${played} / 104`;
@@ -2510,7 +2611,7 @@ async function loadMatches() {
           sendNotification(`🔴 Kickoff!`, `${homeName} vs ${awayName}`, [200, 100, 200]);
         } else if (m.status === 'STATUS_HALFTIME') {
           sendNotification(`⏸️ Half Time`, `${homeName} ${m.home?.score ?? 0} - ${m.away?.score ?? 0} ${awayName}`, [150, 80, 80]);
-        } else if (m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME') {
+        } else if (m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN') {
           const statusText = m.status === 'STATUS_FULL_TIME' ? 'FT' : 'Final';
           sendNotification(`🏁 ${statusText}`, `${homeName} ${m.home?.score ?? 0} - ${m.away?.score ?? 0} ${awayName}`, [300, 150, 300, 150, 500]);
         }
@@ -2780,11 +2881,14 @@ function renderBracket(data) {
 
   function matchHTML(m, gridRow) {
     const isLive = isLiveStatus(m.status);
-    const isDone = m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME';
-    const hScore = m.homeScore != null ? m.homeScore : '-';
-    const aScore = m.awayScore != null ? m.awayScore : '-';
-    const hWin = isDone && m.homeScore > m.awayScore;
-    const aWin = isDone && m.awayScore > m.homeScore;
+    const isDone = m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN';
+    const notStarted = m.status === 'STATUS_SCHEDULED';
+    const hScore = notStarted ? '-' : (m.homeScore != null ? m.homeScore : '-');
+    const aScore = notStarted ? '-' : (m.awayScore != null ? m.awayScore : '-');
+    const hWin = isDone && (m.homeWinner || (m.homeScore > m.awayScore));
+    const aWin = isDone && (m.awayWinner || (m.awayScore > m.homeScore));
+    const isPens = m.status === 'STATUS_FINAL_PEN' && m.homeShootoutScore != null && m.awayShootoutScore != null;
+    const pensHTML = isPens ? '<div class="pens-score">' + m.homeShootoutScore + '-' + m.awayShootoutScore + ' pens</div>' : '';
     const rowStyle = gridRow ? ` style="grid-row:${gridRow}"` : '';
     const hFlag = bracketFlag(m.home);
     const aFlag = bracketFlag(m.away);
@@ -2799,6 +2903,7 @@ function renderBracket(data) {
         <span class="team-name-b">${aFlagHTML}<span>${shortenName(m.away)}</span></span>
         <span class="team-score">${aScore}</span>
       </div>
+      ${pensHTML}
       ${m.date && !isDone ? `<div class="match-date">${new Date(m.date).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'Asia/Kuala_Lumpur'})} · ${new Date(m.date).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Kuala_Lumpur'})}</div>` : ''}
     </div>`;
   }

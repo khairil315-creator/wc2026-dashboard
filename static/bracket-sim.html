@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Cup 2026 — Bracket Simulation</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;overflow-x:hidden}
+h1{font-size:1.5rem;margin:20px 0 6px;background:linear-gradient(135deg,#f5c842,#c9942b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;letter-spacing:1px}
+.subtitle{color:#666;font-size:.8rem;margin-bottom:20px}
+#bracket-wrap{width:1200px;max-width:100%;padding:0 10px;position:relative;overflow-x:auto}
+#bracket{display:flex;gap:8px;min-width:1100px;padding-bottom:20px}
+.col{flex:1;display:flex;flex-direction:column;gap:4px;min-width:130px;position:relative}
+.col-label{text-align:center;font-size:.65rem;font-weight:700;color:#f5c842;text-transform:uppercase;letter-spacing:1px;padding:6px 0;border-bottom:1px solid rgba(245,200,66,.2);margin-bottom:4px}
+.match{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:5px 8px;display:flex;flex-direction:column;gap:2px;transition:all .4s;opacity:0;transform:translateY(12px);position:relative;min-height:48px}
+.match.upcoming{border-color:rgba(255,255,255,.06)}
+.match.played{border-color:rgba(245,200,66,.3);background:rgba(245,200,66,.06)}
+.match .team{display:flex;justify-content:space-between;align-items:center;gap:4px;font-size:.7rem;padding:2px 4px;border-radius:3px;transition:all .3s}
+.match .team .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.match .team .score{font-weight:700;font-size:.75rem;min-width:18px;text-align:center;color:#888}
+.match .team.winner{background:rgba(245,200,66,.12)}
+.match .team.winner .score{color:#f5c842}
+.match .team.loser{opacity:.5}
+.match .team.loser .score{color:#555}
+.match .date{font-size:.55rem;color:#555;text-align:center;padding:1px 0}
+.final-glow{box-shadow:0 0 20px rgba(245,200,66,.3),inset 0 0 20px rgba(245,200,66,.05);border-color:#f5c842!important}
+.final-match .team.winner{background:rgba(245,200,66,.25)}
+.final-match .team.winner .score{color:#ffd700;font-size:.9rem}
+.connector{position:absolute;border-color:rgba(245,200,66,.15);border-style:solid}
+.controls{display:flex;gap:12px;align-items:center;margin:12px 0 20px}
+.controls button{padding:8px 22px;border:1px solid rgba(245,200,66,.4);background:rgba(245,200,66,.08);color:#f5c842;border-radius:20px;cursor:pointer;font-size:.8rem;font-weight:600;transition:all .2s}
+.controls button:hover{background:rgba(245,200,66,.2)}
+.controls button:disabled{opacity:.3;cursor:default}
+.controls .progress{font-size:.75rem;color:#888}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 8px rgba(245,200,66,.2)}50%{box-shadow:0 0 20px rgba(245,200,66,.5)}}
+.match.playing{animation:pulse-glow 1s ease-in-out 2}
+.match.reveal{opacity:1;transform:translateY(0)}
+.flag{font-size:.85rem;line-height:1}
+.crown{font-size:2rem;display:none;margin:10px 0}
+.crown.show{display:block;animation:bounceIn .6s ease}
+@keyframes bounceIn{0%{transform:scale(0)}50%{transform:scale(1.3)}100%{transform:scale(1)}}
+.third-match{opacity:.5;border-color:rgba(255,255,255,.05)!important}
+.third-match .team.winner .score{color:#cd7f32}
+</style>
+</head>
+<body>
+
+<h1>🏆 World Cup 2026 · Bracket Prediction</h1>
+<div class="subtitle">Simulation · Round by Round</div>
+
+<div class="controls">
+  <button id="playBtn" onclick="play()">▶ Play</button>
+  <button id="resetBtn" onclick="reset()">↺ Reset</button>
+  <span class="progress" id="progress">Round 0 / 7</span>
+</div>
+
+<div id="bracket-wrap"><div id="bracket"></div></div>
+<div id="crown" class="crown">🇫🇷</div>
+
+<script>
+const PREDICTIONS = {
+  // R32 (Canada already won)
+  'r32-2': { home: 'Brazil', away: 'Japan', h: 'Brazil', a: 'Japan', hs: 3, as: 0 },
+  'r32-3': { home: 'Germany', away: 'Paraguay', h: 'Germany', a: 'Paraguay', hs: 2, as: 0 },
+  'r32-4': { home: 'Netherlands', away: 'Morocco', h: 'Netherlands', a: 'Morocco', hs: 2, as: 1 },
+  'r32-5': { home: 'Ivory Coast', away: 'Norway', h: 'Norway', a: 'Ivory Coast', hs: 2, as: 1 },
+  'r32-6': { home: 'France', away: 'Sweden', h: 'France', a: 'Sweden', hs: 3, as: 0 },
+  'r32-7': { home: 'Mexico', away: 'Ecuador', h: 'Mexico', a: 'Ecuador', hs: 1, as: 0 },
+  'r32-8': { home: 'England', away: 'Congo DR', h: 'England', a: 'Congo DR', hs: 3, as: 0 },
+  'r32-9': { home: 'Belgium', away: 'Senegal', h: 'Belgium', a: 'Senegal', hs: 2, as: 0 },
+  'r32-10': { home: 'United States', away: 'Bosnia-Herzegovina', h: 'United States', a: 'Bosnia-Herzegovina', hs: 2, as: 1 },
+  'r32-11': { home: 'Spain', away: 'Austria', h: 'Spain', a: 'Austria', hs: 2, as: 0 },
+  'r32-12': { home: 'Portugal', away: 'Croatia', h: 'Portugal', a: 'Croatia', hs: 1, as: 0 },
+  'r32-13': { home: 'Switzerland', away: 'Algeria', h: 'Switzerland', a: 'Algeria', hs: 2, as: 1 },
+  'r32-14': { home: 'Australia', away: 'Egypt', h: 'Egypt', a: 'Australia', hs: 1, as: 0 },
+  'r32-15': { home: 'Argentina', away: 'Cape Verde', h: 'Argentina', a: 'Cape Verde', hs: 4, as: 0 },
+  'r32-16': { home: 'Colombia', away: 'Ghana', h: 'Colombia', a: 'Ghana', hs: 2, as: 0 },
+  // R16
+  'r16-1': { home: 'Canada', away: 'Germany', h: 'Germany', a: 'Canada', hs: 3, as: 0 },
+  'r16-2': { home: 'Brazil', away: 'Norway', h: 'Brazil', a: 'Norway', hs: 2, as: 1 },
+  'r16-3': { home: 'Netherlands', away: 'France', h: 'France', a: 'Netherlands', hs: 3, as: 1 },
+  'r16-4': { home: 'Mexico', away: 'England', h: 'England', a: 'Mexico', hs: 2, as: 0 },
+  'r16-5': { home: 'Spain', away: 'Portugal', h: 'Spain', a: 'Portugal', hs: 2, as: 1 },
+  'r16-6': { home: 'Belgium', away: 'United States', h: 'Belgium', a: 'United States', hs: 1, as: 0 },
+  'r16-7': { home: 'Switzerland', away: 'Argentina', h: 'Argentina', a: 'Switzerland', hs: 2, as: 0 },
+  'r16-8': { home: 'Egypt', away: 'Colombia', h: 'Colombia', a: 'Egypt', hs: 1, as: 0 },
+  // QF
+  'qf-1': { home: 'Germany', away: 'Brazil', h: 'Brazil', a: 'Germany', hs: 2, as: 1 },
+  'qf-2': { home: 'France', away: 'England', h: 'France', a: 'England', hs: 3, as: 1 },
+  'qf-3': { home: 'Spain', away: 'Belgium', h: 'Spain', a: 'Belgium', hs: 2, as: 0 },
+  'qf-4': { home: 'Argentina', away: 'Colombia', h: 'Argentina', a: 'Colombia', hs: 2, as: 0 },
+  // SF
+  'sf-1': { home: 'Brazil', away: 'France', h: 'France', a: 'Brazil', hs: 3, as: 2 },
+  'sf-2': { home: 'Spain', away: 'Argentina', h: 'Argentina', a: 'Spain', hs: 2, as: 1 },
+  // 3rd
+  '3rd-1': { home: 'Brazil', away: 'Spain', h: 'Brazil', a: 'Spain', hs: 3, as: 1 },
+  // Final
+  'final-1': { home: 'France', away: 'Argentina', h: 'France', a: 'Argentina', hs: 3, as: 1 },
+};
+
+const STAGES = [
+  { id: 'r32', label: 'R32', matches: 16, cols: 1 },
+  { id: 'r16', label: 'R16', matches: 8, cols: 2 },
+  { id: 'qf', label: 'QF', matches: 4, cols: 3 },
+  { id: 'sf', label: 'SF', matches: 2, cols: 4 },
+  { id: '3rd', label: '3rd', matches: 1, cols: 5, meta: 'third' },
+  { id: 'final', label: 'Final', matches: 1, cols: 5, meta: 'final' },
+];
+
+// R32 actual matchups
+const R32 = [
+  ['South Africa','Canada','Canada','0-1',true],
+  ['Brazil','Japan','',null,false],
+  ['Germany','Paraguay','',null,false],
+  ['Netherlands','Morocco','',null,false],
+  ['Ivory Coast','Norway','',null,false],
+  ['France','Sweden','',null,false],
+  ['Mexico','Ecuador','',null,false],
+  ['England','Congo DR','',null,false],
+  ['Belgium','Senegal','',null,false],
+  ['United States','Bosnia-Herzegovina','',null,false],
+  ['Spain','Austria','',null,false],
+  ['Portugal','Croatia','',null,false],
+  ['Switzerland','Algeria','',null,false],
+  ['Australia','Egypt','',null,false],
+  ['Argentina','Cape Verde','',null,false],
+  ['Colombia','Ghana','',null,false],
+];
+
+let currentStep = 0;
+let totalSteps = 0;
+let animating = false;
+let timeoutIds = [];
+
+function flag(name) {
+  const f = {
+    'Brazil':'🇧🇷','Japan':'🇯🇵','Germany':'🇩🇪','Paraguay':'🇵🇾',
+    'Netherlands':'🇳🇱','Morocco':'🇲🇦','Ivory Coast':'🇨🇮','Norway':'🇳🇴',
+    'France':'🇫🇷','Sweden':'🇸🇪','Mexico':'🇲🇽','Ecuador':'🇪🇨',
+    'England':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','Congo DR':'🇨🇩','Belgium':'🇧🇪','Senegal':'🇸🇳',
+    'United States':'🇺🇸','Bosnia-Herzegovina':'🇧🇦','Spain':'🇪🇸','Austria':'🇦🇹',
+    'Portugal':'🇵🇹','Croatia':'🇭🇷','Switzerland':'🇨🇭','Algeria':'🇩🇿',
+    'Australia':'🇦🇺','Egypt':'🇪🇬','Argentina':'🇦🇷','Cape Verde':'🇨🇻',
+    'Colombia':'🇨🇴','Ghana':'🇬🇭','South Africa':'🇿🇦','Canada':'🇨🇦',
+  };
+  return f[name] || '🏳️';
+}
+
+function buildBracket() {
+  const root = document.getElementById('bracket');
+  root.innerHTML = '';
+  STAGES.forEach(stage => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.dataset.stage = stage.id;
+    const label = document.createElement('div');
+    label.className = 'col-label';
+    label.textContent = stage.label;
+    col.appendChild(label);
+    const count = stage.matches;
+    for (let i = 1; i <= count; i++) {
+      const mid = `${stage.id}-${i}`;
+      if (stage.id === 'r32') {
+        const m = R32[i-1];
+        const div = document.createElement('div');
+        div.className = 'match upcoming';
+        div.id = mid;
+        const done = m[4];
+        const w = done ? m[2] : '';
+        const l = done ? (m[2] === m[0] ? m[1] : m[0]) : '';
+        const sc = done ? m[3] : '';
+        div.innerHTML = `
+          <div class="team${done && w === m[0] ? ' winner' : ''}">
+            <span class="name">${flag(m[0])} ${m[0]}</span>
+            <span class="score">${done ? (w === m[0] ? sc.split('-')[0] : '') : ''}</span>
+          </div>
+          <div class="team${done && w === m[1] ? ' winner' : ''}">
+            <span class="name">${flag(m[1])} ${m[1]}</span>
+            <span class="score">${done ? (w === m[1] ? sc.split('-')[1] : '') : ''}</span>
+          </div>
+        `;
+        col.appendChild(div);
+      } else {
+        const div = document.createElement('div');
+        div.className = 'match upcoming';
+        div.id = mid;
+        div.innerHTML = `<div class="team"><span class="name" style="color:#555">TBD</span><span class="score"></span></div>
+                         <div class="team"><span class="name" style="color:#555">TBD</span><span class="score"></span></div>`;
+        col.appendChild(div);
+      }
+    }
+    root.appendChild(col);
+  });
+}
+
+function getMatchEl(stageId, idx) {
+  return document.getElementById(`${stageId}-${idx}`);
+}
+
+function getPred(mid) {
+  return PREDICTIONS[mid];
+}
+
+function revealMatch(mid, pred, delay) {
+  const el = document.getElementById(mid);
+  if (!el) return;
+  el.className = 'match played reveal';
+  const rows = el.querySelectorAll('.team');
+  const [hRow, aRow] = rows;
+  const hNameSpan = hRow.querySelector('.name');
+  const aNameSpan = aRow.querySelector('.name');
+  const hScoreSpan = hRow.querySelector('.score');
+  const aScoreSpan = aRow.querySelector('.score');
+  const winnerName = pred.h;
+  const loserName = pred.a;
+  const hName = pred.home;
+  const aName = pred.away;
+  hNameSpan.innerHTML = `${flag(hName)} ${hName}`;
+  aNameSpan.innerHTML = `${flag(aName)} ${aName}`;
+  hScoreSpan.textContent = pred.hs;
+  aScoreSpan.textContent = pred.as;
+  if (winnerName === hName) {
+    hRow.classList.add('winner');
+    aRow.classList.add('loser');
+  } else {
+    aRow.classList.add('winner');
+    hRow.classList.add('loser');
+  }
+}
+
+function advanceToNextRound(stageId, roundIdx, delay) {
+  // Take winners from previous round and place them into the next round
+  const stage = STAGES.find(s => s.id === stageId);
+  if (!stage) return;
+  // Determine source stage matches
+  const srcKey = STAGES[roundIdx - 1]?.id || 'r32';
+  const prizes = STAGES[roundIdx - 1]?.matches || 0;
+  const prizes2 = stage.matches;
+  // Build list of winners from source matches
+  const winners = [];
+  for (let i = 1; i <= prizes; i++) {
+    const mid = `${srcKey}-${i}`;
+    const pred = getPred(mid);
+    if (pred) winners.push(pred.h);
+  }
+  // Assign winners to next round matches
+  for (let i = 1; i <= prizes2; i++) {
+    const mid = `${stageId}-${i}`;
+    const pred = getPred(mid);
+    if (!pred) continue;
+    const el = document.getElementById(mid);
+    if (!el) continue;
+    // Figure out which winner goes where
+    const w1Idx = (i-1)*2;
+    const w2Idx = (i-1)*2+1;
+    const w1 = winners[w1Idx] || 'TBD';
+    const w2 = winners[w2Idx] || 'TBD';
+    // Check if prediction matches
+    const hIsW1 = pred.home === w1 || pred.home === w2;
+    const aIsW1 = pred.away === w1 || pred.away === w2;
+    if (hIsW1 && aIsW1) {
+      // correct matchup
+    } else {
+      // override prediction with actual winners
+      // Actually this gets complex, let's just show the predicted names
+    }
+    el.querySelectorAll('.team .name').forEach((sp, idx) => {
+      if (idx === 0) sp.innerHTML = `${flag(pred.home)} ${pred.home}`;
+      else sp.innerHTML = `${flag(pred.away)} ${pred.away}`;
+    });
+  }
+}
+
+function advanceToNextRound2(stageId, prevStageId) {
+  // Take winners from prev stage and put them in as TBD names
+  const prevMatches = document.querySelectorAll(`#${prevStageId} .match.played`);
+  const winners = [];
+  prevMatches.forEach(m => {
+    const winnerRow = m.querySelector('.team.winner');
+    if (winnerRow) {
+      const nameSpan = winnerRow.querySelector('.name');
+      winners.push(nameSpan?.textContent?.trim() || 'TBD');
+    }
+  });
+  // Filter out empty-ish
+  const w2 = winners.filter(w => w && w !== 'TBD');
+  const matches = document.querySelectorAll(`#${stageId} .match.upcoming`);
+  matches.forEach((m, i) => {
+    const rows = m.querySelectorAll('.team .name');
+    if (rows.length === 2) {
+      const idx1 = i*2;
+      const idx2 = i*2+1;
+      rows[0].innerHTML = `${flag(w2[idx1])} ${w2[idx1] || 'TBD'}`;
+      rows[1].innerHTML = `${flag(w2[idx2])} ${w2[idx2] || 'TBD'}`;
+      rows[0].style.color = '';
+      rows[1].style.color = '';
+    }
+  });
+}
+
+function simulate() {
+  const steps = [
+    // Round 1: R32 (incl Canada already played)
+    () => {
+      const already = document.getElementById('r32-1');
+      already.className = 'match played reveal';
+      already.querySelectorAll('.team .name')[0].innerHTML = '🇿🇦 South Africa';
+      already.querySelectorAll('.team .name')[1].innerHTML = '🇨🇦 Canada';
+      already.querySelectorAll('.team .score')[0].textContent = '0';
+      already.querySelectorAll('.team .score')[1].textContent = '1';
+      already.querySelectorAll('.team')[0].classList.add('loser');
+      already.querySelectorAll('.team')[1].classList.add('winner');
+      // Then reveal the rest of R32
+      const r32Preds = [
+        'r32-2','r32-3','r32-4','r32-5','r32-6','r32-7','r32-8',
+        'r32-9','r32-10','r32-11','r32-12','r32-13','r32-14','r32-15','r32-16'
+      ];
+      r32Preds.forEach((mid, i) => {
+        setTimeout(() => {
+          revealMatch(mid, PREDICTIONS[mid]);
+          if (i === r32Preds.length - 1) {
+            el.classList.remove('playing');
+          }
+        }, (i+1) * 600);
+      });
+    },
+    // R16 - advance winners from R32 into R16, then reveal
+    () => {
+      advanceToNextRound2('r16', 'r32');
+      setTimeout(() => {
+        const ids = ['r16-1','r16-2','r16-3','r16-4','r16-5','r16-6','r16-7','r16-8'];
+        ids.forEach((mid, i) => {
+          setTimeout(() => revealMatch(mid, PREDICTIONS[mid]), i * 500);
+        });
+      }, 300);
+    },
+    // QF
+    () => {
+      setTimeout(() => advanceToNextRound2('qf', 'r16'), 500);
+      setTimeout(() => {
+        const ids = ['qf-1','qf-2','qf-3','qf-4'];
+        ids.forEach((mid, i) => setTimeout(() => revealMatch(mid, PREDICTIONS[mid]), i * 500 + 300));
+      }, 1000);
+    },
+    // SF
+    () => {
+      setTimeout(() => advanceToNextRound2('sf', 'qf'), 500);
+      setTimeout(() => {
+        const ids = ['sf-1','sf-2'];
+        ids.forEach((mid, i) => setTimeout(() => revealMatch(mid, PREDICTIONS[mid]), i * 600 + 300));
+      }, 1000);
+    },
+    // 3rd place
+    () => {
+      setTimeout(() => advanceToNextRound2('3rd', 'sf'), 500);
+      setTimeout(() => {
+        revealMatch('3rd-1', PREDICTIONS['3rd-1']);
+      }, 1000);
+    },
+    // Final
+    () => {
+      setTimeout(() => advanceToNextRound2('final', 'sf'), 500);
+      setTimeout(() => {
+        const el = document.getElementById('final-1');
+        revealMatch('final-1', PREDICTIONS['final-1']);
+        el.classList.add('final-glow','final-match');
+        document.querySelector('#crown').classList.add('show');
+      }, 1000);
+    },
+    // done
+    () => { animating = false; document.getElementById('playBtn').disabled = false; }
+  ];
+  return steps;
+}
+
+let stepIndex = 0;
+let steps = [];
+let playing = false;
+
+function play() {
+  if (animating) return;
+  animating = true;
+  document.getElementById('playBtn').disabled = true;
+  const btn = document.getElementById('playBtn');
+  btn.textContent = '⏳ Simulating...';
+  steps = simulate();
+  stepIndex = 0;
+  runNextStep();
+}
+
+function runNextStep() {
+  if (stepIndex >= steps.length) {
+    animating = false;
+    document.getElementById('playBtn').disabled = false;
+    document.getElementById('playBtn').textContent = '▶ Play';
+    document.getElementById('progress').textContent = '✅ Complete';
+    return;
+  }
+  document.getElementById('progress').textContent = `Round ${stepIndex+1} / ${steps.length-1}`;
+  const stepFn = steps[stepIndex];
+  stepIndex++;
+  let duration = 2000;
+  if (stepIndex === 1) duration = 12000; // R32 has 15 matches
+  else if (stepIndex === 2) duration = 6000;
+  else if (stepIndex === 3) duration = 4000;
+  else if (stepIndex === 4) duration = 3000;
+  else if (stepIndex === 5) duration = 2000;
+  else if (stepIndex === 6) duration = 3000;
+  else duration = 1000;
+  stepFn();
+  setTimeout(runNextStep, duration);
+}
+
+function reset() {
+  if (animating) return;
+  document.querySelectorAll('.match').forEach(m => {
+    m.className = 'match upcoming';
+    m.classList.remove('final-glow','final-match','reveal','played');
+    m.querySelectorAll('.team').forEach(t => {
+      t.classList.remove('winner','loser');
+      const nameSpan = t.querySelector('.name');
+      const scoreSpan = t.querySelector('.score');
+      nameSpan.innerHTML = 'TBD';
+      nameSpan.style.color = '#555';
+      scoreSpan.textContent = '';
+    });
+  });
+  document.getElementById('crown').classList.remove('show');
+  document.getElementById('progress').textContent = 'Ready';
+  document.getElementById('playBtn').disabled = false;
+  document.getElementById('playBtn').textContent = '▶ Play';
+  // Reset R32
+  R32.forEach((m, i) => {
+    const el = document.getElementById(`r32-${i+1}`);
+    if (!el) return;
+    el.className = 'match upcoming';
+    const name0 = el.querySelectorAll('.team .name')[0];
+    const name1 = el.querySelectorAll('.team .name')[1];
+    name0.innerHTML = `${flag(m[0])} ${m[0]}`;
+    name1.innerHTML = `${flag(m[1])} ${m[1]}`;
+    name0.style.color = '';
+    name1.style.color = '';
+    el.querySelectorAll('.team .score').forEach(s => s.textContent = '');
+    el.querySelectorAll('.team').forEach(t => t.classList.remove('winner','loser'));
+    if (i === 0) {
+      el.className = 'match played reveal';
+      el.querySelectorAll('.team .score')[0].textContent = '0';
+      el.querySelectorAll('.team .score')[1].textContent = '1';
+      el.querySelectorAll('.team')[0].classList.add('loser');
+      el.querySelectorAll('.team')[1].classList.add('winner');
+    }
+  });
+  playing = false;
+}
+
+// Init
+buildBracket();
+reset();
+</script>
+</body>
+</html>

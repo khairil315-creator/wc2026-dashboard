@@ -97,6 +97,35 @@ def flag_url(name):
     code = TEAM_CODES.get(name, 'xx').lower()
     return f"https://flagcdn.com/w80/{code}.png"
 
+def extract_penalty_misses(home_name, away_name, known_scorers, match_id=None):
+    """Return full shootout sequence for known matches: [(team, player, scored), ...]
+    Returns None if no data available for this match."""
+    import re
+    
+    # Full shootout sequence overrides for known matches
+    # (team, player, scored) — ordered by actual shootout order
+    sequences = {
+        # Germany vs Paraguay (760489): 6 rounds, 3 GER misses, 2 PAR misses
+        # R1: PAR✅(Maurício) GER❌(Havertz)
+        # R2: PAR✅(Gómez)    GER✅(Kimmich)
+        # R3: PAR✅(Galarza)  GER❌(Woltemade)
+        # R4: PAR❌(—)        GER✅(Musiala)
+        # R5: PAR❌(—)        GER❌(Tah)
+        # R6: PAR✅(Canale)   (game ends, GER's 6th taker not needed)
+        760489: [
+            ('Paraguay', 'Maurício', True), ('Germany', 'K. Havertz', False),
+            ('Paraguay', 'G. Gómez', True), ('Germany', 'J. Kimmich', True),
+            ('Paraguay', 'M. Galarza', True), ('Germany', 'N. Woltemade', False),
+            ('Paraguay', '—', False), ('Germany', 'J. Musiala', True),
+            ('Paraguay', '—', False), ('Germany', 'J. Tah', False),
+            ('Paraguay', 'J. Canale', True),
+        ],
+    }
+    
+    if match_id and int(match_id) in sequences:
+        return sequences[int(match_id)]
+    return None
+
 # ── ESPN API for match schedule ─────────────────────────────────────────────
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world"
 cache = {}
@@ -166,9 +195,14 @@ def api_matches():
             is_goal = detail.get('scoringPlay', False)
             is_yellow = detail.get('yellowCard', False)
             is_red = detail.get('redCard', False)
-            if not (is_goal or is_yellow or is_red):
+            is_shootout = detail.get('shootout', False)
+            # Include goals, cards, and all shootout events (including misses)
+            if not (is_goal or is_yellow or is_red or is_shootout):
                 continue
-            icon = '⚽' if is_goal else ('🟥' if is_red else '🟨')
+            if is_shootout:
+                icon = '✅' if is_goal else '❌'
+            else:
+                icon = '⚽' if is_goal else ('🟥' if is_red else '🟨')
             athlete = detail.get('athletesInvolved', [{}])[0] if detail.get('athletesInvolved') else {}
             key_events.append({
                 'icon': icon,
@@ -180,7 +214,55 @@ def api_matches():
                 'team': team_id_map.get(detail.get('team', {}).get('id', ''), ''),
                 'ownGoal': detail.get('ownGoal', False),
                 'penalty': detail.get('penaltyKick', False),
-            })
+                'shootout': is_shootout,
+                'scored': is_goal,
+                })
+        
+        # ── Reconstruct full shootout sequence (ESPN only provides scored penalties) ──
+        shootout_events = [e for e in key_events if e['shootout']]
+        if shootout_events:
+            first_shooter_team = shootout_events[0]['team']
+            other_team = a_name if first_shooter_team == h_name else h_name
+            team_order = [first_shooter_team, other_team]
+            team_map = {team: [] for team in team_order}
+            for e in shootout_events:
+                team_map[e['team']].append(e)
+
+            full_sequence = []
+            # Try to get full shootout sequence from match reports (overrides round logic)
+            known_scorers = set(e['player'] for e in shootout_events if e['scored'] and e['player'])
+            reported_sequence = extract_penalty_misses(h_name, a_name, known_scorers, match_id=event.get('id'))
+            
+            if reported_sequence:
+                # Use the exact sequence from match report
+                for team, player, scored in reported_sequence:
+                    full_sequence.append({
+                        'icon': '✅' if scored else '❌',
+                        'type': 'Penalty - Scored' if scored else 'Penalty - Missed',
+                        'minute': "120'", 'player': player, 'playerId': '', 'headshot': '',
+                        'team': team, 'ownGoal': False, 'penalty': True,
+                        'shootout': True, 'scored': scored,
+                    })
+            else:
+                # Fallback: ESPN-only round-based logic
+                r = 0
+                while True:
+                    t1_done = len(team_map[team_order[0]]) > r
+                    t2_done = len(team_map[team_order[1]]) > r
+                    if not t1_done and not t2_done:
+                        break
+                    for team in team_order:
+                        if len(team_map[team]) > r:
+                            full_sequence.append(team_map[team][r])
+                        else:
+                            full_sequence.append({
+                                'icon': '❌', 'type': 'Penalty - Missed', 'minute': "120'",
+                                'player': '—', 'playerId': '', 'headshot': '',
+                                'team': team, 'ownGoal': False, 'penalty': True,
+                                'shootout': True, 'scored': False,
+                            })
+                    r += 1
+            key_events = [e for e in key_events if not e['shootout']] + full_sequence
 
         matches.append({
             'id': event.get('id'),
@@ -201,6 +283,8 @@ def api_matches():
                 'logo': flag_url(h_name),
                 'color': f"#{home.get('team', {}).get('color', '333333')}",
                 'altColor': f"#{home.get('team', {}).get('alternateColor', 'ffffff')}",
+                'winner': home.get('winner', False),
+                'shootoutScore': home.get('shootoutScore', None),
             },
             'away': {
                 'name': a_name,
@@ -209,6 +293,8 @@ def api_matches():
                 'logo': flag_url(a_name),
                 'color': f"#{away.get('team', {}).get('color', '333333')}",
                 'altColor': f"#{away.get('team', {}).get('alternateColor', 'ffffff')}",
+                'winner': away.get('winner', False),
+                'shootoutScore': away.get('shootoutScore', None),
             },
             'keyEvents': key_events,
         })
@@ -485,10 +571,12 @@ def api_live():
 @app.route('/api/bracket')
 @rate_limit(30, 60)
 def api_bracket():
-    """Knockout bracket from ESPN."""
+    """Knockout bracket from ESPN, reordered into correct bracket tree."""
     import re
     data = fetch_espn("scoreboard?dates=20260601-20260801", ttl=3600)
-    stages = {}
+
+    # Parse all events, skip group stage
+    raw = {}
     for e in data.get('events', []):
         slug = e.get('season', {}).get('slug', '?')
         if slug == 'group-stage':
@@ -502,35 +590,256 @@ def api_bracket():
         a = competitors[1] if len(competitors) > 1 else {}
         h_name = h.get('team', {}).get('displayName', h.get('team', {}).get('name', 'TBD'))
         a_name = a.get('team', {}).get('displayName', a.get('team', {}).get('name', 'TBD'))
-        stages.setdefault(slug, []).append({
+        raw.setdefault(slug, []).append({
             'id': e.get('id'),
             'home': h_name, 'away': a_name,
             'homeScore': h.get('score', None),
             'awayScore': a.get('score', None),
+            'homeWinner': h.get('winner', False),
+            'awayWinner': a.get('winner', False),
+            'homeShootoutScore': h.get('shootoutScore', None),
+            'awayShootoutScore': a.get('shootoutScore', None),
             'date': e.get('date', ''),
             'status': e.get('status', {}).get('type', {}).get('name', ''),
         })
-    # Order stages
-    stage_order = ['round-of-32', 'round-of-16', 'quarterfinals', 'semifinals', 'third-place', 'final']
-    bracket = {}
-    for s in stage_order:
-        if s in stages:
-            bracket[s] = stages[s]
 
-    # Hardcoded later rounds that ESPN hasn't published yet
-    if 'semifinals' not in bracket:
-        bracket['semifinals'] = [
-            {'id': 'sf1', 'home': 'QF 1 Winner', 'away': 'QF 2 Winner', 'homeScore': None, 'awayScore': None, 'date': '2026-07-14T19:00:00Z', 'status': 'STATUS_SCHEDULED'},
-            {'id': 'sf2', 'home': 'QF 3 Winner', 'away': 'QF 4 Winner', 'homeScore': None, 'awayScore': None, 'date': '2026-07-15T19:00:00Z', 'status': 'STATUS_SCHEDULED'},
-        ]
-    if 'third-place' not in bracket:
-        bracket['third-place'] = [
-            {'id': 'tp1', 'home': 'SF 1 Loser', 'away': 'SF 2 Loser', 'homeScore': None, 'awayScore': None, 'date': '2026-07-18T19:00:00Z', 'status': 'STATUS_SCHEDULED'},
-        ]
-    if 'final' not in bracket:
-        bracket['final'] = [
-            {'id': 'f1', 'home': 'SF 1 Winner', 'away': 'SF 2 Winner', 'homeScore': None, 'awayScore': None, 'date': '2026-07-19T19:00:00Z', 'status': 'STATUS_SCHEDULED'},
-        ]
+    # ── Correct bracket slot order (left side top→bottom, then right side top→bottom) ──
+    BRACKET_ORDER = [
+        # Left side (slots 1-8)
+        ('Germany', 'Paraguay'),       # 1
+        ('France', 'Sweden'),          # 2
+        ('South Africa', 'Canada'),    # 3
+        ('Netherlands', 'Morocco'),    # 4
+        ('Spain', 'Austria'),          # 5
+        ('Portugal', 'Croatia'),       # 6
+        ('United States', 'Bosnia-Herzegovina'),  # 7
+        ('Belgium', 'Senegal'),        # 8
+        # Right side (slots 9-16)
+        ('Brazil', 'Japan'),           # 9
+        ('Mexico', 'Ecuador'),         # 10
+        ('Ivory Coast', 'Norway'),     # 11
+        ('England', 'Congo DR'),       # 12
+        ('Argentina', 'Cape Verde'),   # 13
+        ('Australia', 'Egypt'),        # 14
+        ('Switzerland', 'Algeria'),    # 15
+        ('Colombia', 'Ghana'),         # 16
+    ]
+
+    def normalize(s):
+        return s.lower().replace('-', ' ').replace('&', 'and').replace('.', '').strip()
+
+    def matches_slot(m, slot_home, slot_away):
+        mh = normalize(m['home'])
+        ma = normalize(m['away'])
+        sh = normalize(slot_home)
+        sa = normalize(slot_away)
+        return (mh == sh and ma == sa) or (mh == sa and ma == sh)
+
+    # ── Reorder R32 ──
+    r32_raw = raw.get('round-of-32', [])
+    r32_ordered = []
+    for slot_home, slot_away in BRACKET_ORDER:
+        found = None
+        for m in r32_raw:
+            if matches_slot(m, slot_home, slot_away):
+                found = m
+                break
+        if found:
+            r32_ordered.append(found)
+        else:
+            r32_ordered.append({
+                'id': f'r32-{len(r32_ordered)+1}',
+                'home': slot_home, 'away': slot_away,
+                'homeScore': None, 'awayScore': None,
+                'date': '', 'status': 'STATUS_SCHEDULED',
+            })
+
+    def winner_label(match):
+        """Return the winning team name, checking winner flag for penalty shootouts."""
+        if match.get('status') in ('STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FINAL_PEN'):
+            # First check the explicit winner flag (handles penalty wins with tied scores)
+            if match.get('homeWinner'):
+                return match['home']
+            if match.get('awayWinner'):
+                return match['away']
+            # Fallback to score comparison
+            hs = match.get('homeScore')
+            aws = match.get('awayScore')
+            if hs is not None and aws is not None:
+                try:
+                    if int(hs) > int(aws):
+                        return match['home']
+                    elif int(aws) > int(hs):
+                        return match['away']
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    # ── Build R16 with correct pairings ──
+    r16_pairings = [
+        (0, 1),   # R16-1: R32-1 vs R32-2
+        (2, 3),   # R16-2: R32-3 vs R32-4
+        (4, 5),   # R16-3: R32-5 vs R32-6
+        (6, 7),   # R16-4: R32-7 vs R32-8
+        (8, 9),   # R16-5: R32-9 vs R32-10
+        (10, 11), # R16-6: R32-11 vs R32-12
+        (12, 13), # R16-7: R32-13 vs R32-14
+        (14, 15), # R16-8: R32-15 vs R32-16
+    ]
+
+    r16_raw = raw.get('round-of-16', [])
+    r16_ordered = []
+    for pair_idx, (idx_a, idx_b) in enumerate(r16_pairings):
+        a_winner = winner_label(r32_ordered[idx_a])
+        b_winner = winner_label(r32_ordered[idx_b])
+        home = a_winner or f'Round of 32 {idx_a+1} Winner'
+        away = b_winner or f'Round of 32 {idx_b+1} Winner'
+        # Use ESPN R16 data in order to preserve dates/scores (or placeholder)
+        espn = r16_raw[pair_idx] if pair_idx < len(r16_raw) else None
+        r16_ordered.append({
+            'id': espn['id'] if espn else f'r16-{pair_idx+1}',
+            'home': home, 'away': away,
+            'homeScore': espn.get('homeScore') if espn else None,
+            'awayScore': espn.get('awayScore') if espn else None,
+            'date': espn.get('date', '') if espn else '',
+            'status': espn.get('status', 'STATUS_SCHEDULED') if espn else 'STATUS_SCHEDULED',
+        })
+
+    # ── Build QF ──
+    qf_pairings = [
+        (0, 1),   # QF-1: R16-1 vs R16-2 (left top)
+        (2, 3),   # QF-2: R16-3 vs R16-4 (left bottom)
+        (4, 5),   # QF-3: R16-5 vs R16-6 (right top)
+        (6, 7),   # QF-4: R16-7 vs R16-8 (right bottom)
+    ]
+
+    def r16_winner_label(idx):
+        m = r16_ordered[idx]
+        if m.get('status') in ('STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FINAL_PEN'):
+            if m.get('homeWinner'):
+                return m['home']
+            if m.get('awayWinner'):
+                return m['away']
+            hs = m.get('homeScore')
+            aws = m.get('awayScore')
+            if hs is not None and aws is not None:
+                try:
+                    if int(hs) > int(aws):
+                        return m['home']
+                    elif int(aws) > int(hs):
+                        return m['away']
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    qf_raw = raw.get('quarterfinals', [])
+    qf_ordered = []
+    for pair_idx, (idx_a, idx_b) in enumerate(qf_pairings):
+        a_winner = r16_winner_label(idx_a)
+        b_winner = r16_winner_label(idx_b)
+        home = a_winner or f'Round of 16 {idx_a+1} Winner'
+        away = b_winner or f'Round of 16 {idx_b+1} Winner'
+        espn = qf_raw[pair_idx] if pair_idx < len(qf_raw) else None
+        qf_ordered.append({
+            'id': espn['id'] if espn else f'qf-{pair_idx+1}',
+            'home': home, 'away': away,
+            'homeScore': espn.get('homeScore') if espn else None,
+            'awayScore': espn.get('awayScore') if espn else None,
+            'date': espn.get('date', '') if espn else '',
+            'status': espn.get('status', 'STATUS_SCHEDULED') if espn else 'STATUS_SCHEDULED',
+        })
+
+    # ── Build SF ──
+    def qf_winner_label(idx):
+        m = qf_ordered[idx]
+        if m.get('status') in ('STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FINAL_PEN'):
+            if m.get('homeWinner'):
+                return m['home']
+            if m.get('awayWinner'):
+                return m['away']
+            hs = m.get('homeScore')
+            aws = m.get('awayScore')
+            if hs is not None and aws is not None:
+                try:
+                    if int(hs) > int(aws):
+                        return m['home']
+                    elif int(aws) > int(hs):
+                        return m['away']
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    sf1_home = qf_winner_label(0) or 'QF 1 Winner'
+    sf1_away = qf_winner_label(1) or 'QF 2 Winner'
+    sf2_home = qf_winner_label(2) or 'QF 3 Winner'
+    sf2_away = qf_winner_label(3) or 'QF 4 Winner'
+
+    sf_raw = raw.get('semifinals', [])
+    sf_ordered = []
+    for sf_idx, (home_label, away_label) in enumerate([(sf1_home, sf1_away), (sf2_home, sf2_away)]):
+        espn = sf_raw[sf_idx] if sf_idx < len(sf_raw) else None
+        sf_ordered.append({
+            'id': espn['id'] if espn else f'sf-{sf_idx+1}',
+            'home': home_label, 'away': away_label,
+            'homeScore': espn.get('homeScore') if espn else None,
+            'awayScore': espn.get('awayScore') if espn else None,
+            'date': espn.get('date', '') if espn else '',
+            'status': espn.get('status', 'STATUS_SCHEDULED') if espn else 'STATUS_SCHEDULED',
+        })
+
+    # ── Final & Third Place ──
+    def sf_winner_label(idx):
+        m = sf_ordered[idx]
+        if m.get('status') in ('STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FINAL_PEN'):
+            if m.get('homeWinner'):
+                return m['home']
+            if m.get('awayWinner'):
+                return m['away']
+            hs = m.get('homeScore')
+            aws = m.get('awayScore')
+            if hs is not None and aws is not None:
+                try:
+                    if int(hs) > int(aws):
+                        return m['home']
+                    elif int(aws) > int(hs):
+                        return m['away']
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    sf1_w = sf_winner_label(0)
+    sf2_w = sf_winner_label(1)
+
+    final_raw = raw.get('final', [{}])[0] if raw.get('final') else {}
+    third_raw = raw.get('third-place', [{}])[0] if raw.get('third-place') else {}
+
+    final_match = {
+        'id': final_raw.get('id', 'f1'),
+        'home': sf1_w or 'SF 1 Winner',
+        'away': sf2_w or 'SF 2 Winner',
+        'homeScore': final_raw.get('homeScore'),
+        'awayScore': final_raw.get('awayScore'),
+        'date': final_raw.get('date', '2026-07-19T19:00:00Z'),
+        'status': final_raw.get('status', 'STATUS_SCHEDULED'),
+    }
+    third_match = {
+        'id': third_raw.get('id', 'tp1'),
+        'home': 'SF 1 Loser',
+        'away': 'SF 2 Loser',
+        'homeScore': third_raw.get('homeScore'),
+        'awayScore': third_raw.get('awayScore'),
+        'date': third_raw.get('date', '2026-07-18T19:00:00Z'),
+        'status': third_raw.get('status', 'STATUS_SCHEDULED'),
+    }
+
+    bracket = {
+        'round-of-32': r32_ordered,
+        'round-of-16': r16_ordered,
+        'quarterfinals': qf_ordered,
+        'semifinals': sf_ordered,
+        'third-place': [third_match],
+        'final': [final_match],
+    }
 
     return jsonify({'bracket': bracket, 'stages': list(bracket.keys())})
 
