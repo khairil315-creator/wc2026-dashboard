@@ -120,6 +120,19 @@ def extract_penalty_misses(home_name, away_name, known_scorers, match_id=None):
             ('Paraguay', '—', False), ('Germany', 'J. Tah', False),
             ('Paraguay', 'J. Canale', True),
         ],
+        # Netherlands vs Morocco (760488): 10 kicks, NED 2-3 MAR
+        # R1: NED✅(Koopmeiners)   MAR❌(El Aynaoui - bar)
+        # R2: NED❌(Kluivert - post) MAR✅(Rahimi)
+        # R3: NED✅(Weghorst)       MAR✅(Talbi)
+        # R4: NED❌(Timber - miss)  MAR❌(Hakimi - post)
+        # SD: NED❌(Summerville - saved) MAR✅(Saibari - winner)
+        760488: [
+            ('Netherlands', 'T. Koopmeiners', True), ('Morocco', 'N. El Aynaoui', False),
+            ('Netherlands', 'J. Kluivert', False), ('Morocco', 'S. Rahimi', True),
+            ('Netherlands', 'W. Weghorst', True), ('Morocco', 'C. Talbi', True),
+            ('Netherlands', 'Q. Timber', False), ('Morocco', 'A. Hakimi', False),
+            ('Netherlands', 'C. Summerville', False), ('Morocco', 'I. Saibari', True),
+        ],
     }
     
     if match_id and int(match_id) in sequences:
