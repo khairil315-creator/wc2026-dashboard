@@ -499,6 +499,21 @@ body {
   font-weight: 600;
 }
 
+/* Stage sections in 'all' view */
+.stage-section {
+  margin-bottom: 24px;
+}
+.stage-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
 /* Score area */
 .match-score-area {
   display: flex;
@@ -2380,6 +2395,78 @@ function renderSchedule(byDate) {
     if (heroCount) heroCount.textContent = '\u2014';
     return;
   }
+
+  // When showing 'all', split into knockout first then group (completed group at bottom)
+  if (stageFilter === 'all') {
+    const koDates = {};
+    const gpActiveDates = {};
+    const gpDoneDates = {};
+
+    keys.forEach(key => {
+      const matches = filtered[key];
+      matches.forEach(m => {
+        const isKO = m.stage && m.stage !== 'group-stage';
+        const isCompleted = m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN';
+        if (isKO) {
+          (koDates[key] = koDates[key] || []).push(m);
+        } else if (isCompleted) {
+          (gpDoneDates[key] = gpDoneDates[key] || []).push(m);
+        } else {
+          (gpActiveDates[key] = gpActiveDates[key] || []).push(m);
+        }
+      });
+    });
+
+    let html = '';
+    let total = 0;
+
+    // 1. Knockout section
+    const koKeys = Object.keys(koDates).sort();
+    if (koKeys.length) {
+      html += '<div class="stage-section"><div class="stage-section-title">🏆 Knockout</div>';
+      koKeys.forEach(key => {
+        total += koDates[key].length;
+        html += `<div class="date-group"><div class="date-label">${fmtDateGroup(key)}</div><div class="date-matches">${koDates[key].map(m => matchCardHTML(m)).join('')}</div></div>`;
+      });
+      html += '</div>';
+    }
+
+    // 2. Active/upcoming group matches
+    const gpActiveKeys = Object.keys(gpActiveDates).sort();
+    if (gpActiveKeys.length) {
+      html += '<div class="stage-section"><div class="stage-section-title">⚽ Group Stage</div>';
+      gpActiveKeys.forEach(key => {
+        total += gpActiveDates[key].length;
+        html += `<div class="date-group"><div class="date-label">${fmtDateGroup(key)}</div><div class="date-matches">${gpActiveDates[key].map(m => matchCardHTML(m)).join('')}</div></div>`;
+      });
+      html += '</div>';
+    }
+
+    // 3. Completed group matches at the bottom
+    const gpDoneKeys = Object.keys(gpDoneDates).sort();
+    if (gpDoneKeys.length) {
+      html += '<div class="stage-section"><div class="stage-section-title">⚽ Completed Group Matches</div>';
+      gpDoneKeys.forEach(key => {
+        total += gpDoneDates[key].length;
+        html += `<div class="date-group"><div class="date-label">${fmtDateGroup(key)}</div><div class="date-matches">${gpDoneDates[key].map(m => matchCardHTML(m)).join('')}</div></div>`;
+      });
+      html += '</div>';
+    }
+
+    container.innerHTML = html;
+    countEl.textContent = `${total} matches`;
+    if (heroCount) {
+      let played = 0;
+      keys.forEach(key => {
+        filtered[key].forEach(m => {
+          if (m.status === 'STATUS_FINAL' || m.status === 'STATUS_FULL_TIME' || m.status === 'STATUS_FINAL_PEN' || isLiveStatus(m.status)) played++;
+        });
+      });
+      heroCount.textContent = `${played} / 104`;
+    }
+    return;
+  }
+
   let total = 0;
   let html = '';
   keys.forEach(key => {
